@@ -1,10 +1,11 @@
 from fastapi import APIRouter
-# from typing_extensions import Annotated
 
-# from app.core.dependencies import get_current_user
-from . import service
 from app.shared.factories.response_factory import ResponseFactory
 from app.shared.schemas.response import ApiResponse
+
+# from typing_extensions import Annotated
+# from app.core.dependencies import get_current_user
+from . import service
 from .schema import TextRequest
 
 router = APIRouter()

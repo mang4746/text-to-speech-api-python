@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends
-# from typing_extensions import Annotated
 
+# from typing_extensions import Annotated
 # from app.core.dependencies import get_current_user
 from app.core.auth.api_key import validate_api_key
-from . import service
 from app.shared.factories.response_factory import ResponseFactory
 from app.shared.schemas.response import ApiResponse
+
+from . import service
 
 router = APIRouter()
 

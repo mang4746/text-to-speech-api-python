@@ -2,8 +2,8 @@ import base64
 
 from app.core.logger import get_logger
 from app.providers.tts.elevenlabs_provider import ElevenLabsTTSProvider
-from app.providers.tts.schemas import TTSRequest
 from app.providers.tts.exceptions import TTSProviderError
+from app.providers.tts.schemas import TTSRequest
 from app.shared.text_processors import TextPreprocessor
 
 logger = get_logger(__name__)
