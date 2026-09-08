@@ -1,0 +1,57 @@
+"""Dependencias centrales del proyecto relacionadas con autenticación."""
+
+from typing import Callable, List
+from fastapi import Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+
+from app.core.logger import get_logger
+from .security import validar_token
+from .constants import ERROR_MESSAGES
+from app.shared.exceptions import UnauthorizedError, ForbiddenRoleError
+
+logger = get_logger(__name__)
+
+# auto_error=False permite manejar la excepción manualmente
+security = HTTPBearer(auto_error=False)
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    """Dependencia que valida el token JWT del usuario y retorna el payload."""
+    logger.debug("Procesando autenticación de usuario")
+
+    # Validar que se proporcionaron credenciales
+    if not credentials:
+        logger.debug("No se proporcionaron credenciales")
+        raise UnauthorizedError(ERROR_MESSAGES["missing_token"])
+
+    token = credentials.credentials
+    logger.debug(f"Token recibido (primeros 50 chars): {token[:50]}...")
+
+    payload = await validar_token(token)
+    logger.debug("Usuario autenticado exitosamente")
+
+    return payload
+
+
+def check_role(required_roles: List[str]) -> Callable:
+    """
+    Dependencia que valida que el usuario tiene uno de los roles requeridos.
+    """
+    async def role_validator(current_user: dict = Depends(get_current_user)) -> dict:
+        # Extraer lista de roles del token (cada rol es un dict con "cod_rol")
+        user_roles = [role.get("cod_rol") for role in current_user.get("roles", [])]
+        
+        logger.debug(f"Validando roles: usuario={user_roles}, requeridos={required_roles}")
+        
+        # Verificar que al menos uno de los roles del usuario está en la lista permitida
+        if not any(role in required_roles for role in user_roles):
+            logger.exception(f"Rol insuficiente: {user_roles} no incluye ninguno de {required_roles}")
+            raise ForbiddenRoleError(
+                f"Se requiere uno de los siguientes roles: {', '.join(required_roles)}"
+            )
+        
+        logger.debug("Validación de rol exitosa")
+        return current_user
+    
+    return role_validator

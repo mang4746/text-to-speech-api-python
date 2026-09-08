@@ -1,0 +1,143 @@
+import jwt
+import httpx
+import base64
+from cryptography.hazmat.primitives.asymmetric import rsa
+from .config import settings
+from app.shared.exceptions import TokenExpiredError, TokenInvalidError, InternalServerError, NotFoundError
+from app.db.neo4j.session import get_neo4j_driver
+from app.core.logger import get_logger
+
+logger = get_logger(__name__)
+
+# Construir la URL completa del JWKS endpoint
+JWKS_URL = f"{settings.AUTH_JWKS_BASE_URL}/admin-ia/auth/.well-known/jwks.json"
+
+
+def base64url_decode(val: str):
+    """Decodifica una cadena base64url a bytes."""
+    padding = '=' * (-len(val) % 4)
+    return base64.urlsafe_b64decode(val + padding)
+
+
+async def obtener_jwks():
+    """Obtiene las claves JWKS desde el endpoint configurado."""
+    logger.debug(f"Obteniendo JWKS desde: {JWKS_URL}")
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(JWKS_URL)
+        logger.debug(f"Status Code JWKS: {response.status_code}")
+
+        if response.status_code != 200:
+            logger.error(f"Error obteniendo JWKS: {response.text}")
+            # Usar excepción personalizada en lugar de HTTPException
+            raise InternalServerError("No se pudo obtener las claves de autenticación del servidor")
+
+        jwks = response.json()
+        logger.debug("JWKS obtenido exitosamente")
+        return jwks
+
+
+def construir_clave_publica(jwk):
+    """Construye la clave pública RSA desde un JWK."""
+    logger.debug("Construyendo clave pública desde JWK")
+
+    n = int.from_bytes(base64url_decode(jwk["n"]), "big")
+    e = int.from_bytes(base64url_decode(jwk["e"]), "big")
+
+    public_key = rsa.RSAPublicNumbers(e, n).public_key()
+    logger.debug("Clave pública construida exitosamente")
+    return public_key
+
+
+async def obtener_sec_persona(login: str) -> int:
+
+    try:
+        # Obtener driver de Neo4j
+        driver = get_neo4j_driver()
+        
+        # Crear sesión y ejecutar query
+        async with driver.session() as session:
+            result = await session.run(
+                "MATCH (u:Usuario) WHERE u.login = $login RETURN u.sec_persona AS SEC_PERSONA",
+                login=login
+            )
+            
+            # Obtener el resultado
+            record = await result.single()
+            
+            if not record:
+                raise NotFoundError(f"Usuario {login} no encontrado en el sistema")
+            
+            sec_persona = record.get("SEC_PERSONA")
+            
+            if sec_persona is None:
+                raise InternalServerError("No se pudo obtener sec_persona del usuario")
+            
+            return int(sec_persona)
+            
+    except (NotFoundError, InternalServerError):
+        raise
+    except Exception as e:
+        raise InternalServerError(f"Error al obtener datos del usuario: {str(e)}")
+
+
+async def validar_token(token: str):
+    """Valida un JWT token usando JWKS y configuración de autenticación."""
+    logger.debug("Iniciando validación de token")
+
+    try:
+        # Obtener claves JWKS
+        jwks = await obtener_jwks()
+
+        # Usar la primera clave (generalmente kid se especifica, pero aquí tomamos la primera)
+        key = jwks["keys"][0]
+        logger.debug(f"Usando clave JWKS con kid: {key.get('kid', 'sin kid')}")
+
+        # Construir clave pública
+        public_key = construir_clave_publica(key)
+
+        # Configuración de validación
+        logger.debug(f"Validando con algoritmos: {settings.AUTH_JWT_ALGORITHMS}, audience: {settings.AUTH_JWT_AUDIENCE}, issuer: {settings.AUTH_JWT_ISSUER}")
+
+        # Decodificar y validar token
+        payload = jwt.decode(
+            token,
+            public_key,
+            algorithms=settings.AUTH_JWT_ALGORITHMS,
+            audience=settings.AUTH_JWT_AUDIENCE,
+            issuer=settings.AUTH_JWT_ISSUER
+        )
+
+        logger.debug("Token validado exitosamente")
+
+        # Obtener sec_persona desde Neo4j
+        login = payload.get("data", {}).get("sub") or payload.get("sub")
+        if not login:
+            logger.error("No se encontró login (sub) en el payload del token")
+            raise TokenInvalidError("Token inválido: no contiene información de usuario")
+        sec_persona = await obtener_sec_persona(login)
+        
+        # Agregar sec_persona al payload
+        payload["sec_persona"] = sec_persona
+        logger.debug(f"Token validado exitosamente para usuario {login} con sec_persona {sec_persona}")
+        
+        return payload
+
+    except jwt.ExpiredSignatureError:
+        # Token expirado - usar excepción personalizada
+        logger.error("Token expirado")
+        raise TokenExpiredError("Token expirado - por favor inicia sesión nuevamente")
+
+    except jwt.InvalidTokenError as e:
+        # Token inválido - usar excepción personalizada
+        logger.error(f"Token inválido: {str(e)}")
+        raise TokenInvalidError(f"Token inválido - {str(e)}")
+    
+    except (TokenExpiredError, TokenInvalidError, NotFoundError, InternalServerError):
+        # Re-lanzar excepciones personalizadas
+        raise
+    
+    except Exception as e:
+        # Capturar cualquier otra excepción no esperada
+        logger.error(f"Error inesperado durante validación de token: {str(e)}")
+        raise InternalServerError(f"Error durante validación de token: {str(e)}")

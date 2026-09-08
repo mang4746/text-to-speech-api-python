@@ -1,0 +1,20 @@
+services:
+  text-to-speech-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: text-to-speech-api:latest
+    container_name: text-to-speech-api
+    env_file:
+      - .env
+    ports:
+      - "${APP_PORT:-8000}:${APP_PORT:-8000}"
+    deploy:
+        resources:
+          limits:
+            cpus: '1.0'
+            memory: 2G
+          reservations:
+            cpus: '0.5'
+            memory: 1G
+    restart: unless-stopped
