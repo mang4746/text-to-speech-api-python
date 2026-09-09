@@ -69,6 +69,5 @@ async def set_request_context(request: Request, call_next):
 
 app.include_router(
     api_v1_router,
-    prefix="/api"
-    # prefix="/api/v1"
+    prefix="/api/v1"
 )
