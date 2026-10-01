@@ -341,7 +341,7 @@ Responderá con un mensaje `audio` y luego `buffer`.
 ```bash
 # Clonar repositorio
 git clone <repo-url>
-cd WS-PYTHON-TEXT-TO-SPEECH
+cd text-to-speech-api-python
 
 # Crear archivo .env con credenciales
 cp .env.example .env
